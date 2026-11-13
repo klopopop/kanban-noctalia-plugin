@@ -1,0 +1,4 @@
+*.tmp.png
+*.foot.txt
+*.png.txt
+.DS_Store

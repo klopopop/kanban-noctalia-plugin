@@ -1,0 +1,19 @@
+{
+  "settings": {
+    "board_path": {
+      "label": "Default board (Obsidian Kanban markdown)"
+    },
+    "font_path": {
+      "label": "Card font (.ttf/.otf, empty = shell font)"
+    },
+    "boards_dir": {
+      "label": "Boards folder (every Obsidian Kanban .md inside is a tab)"
+    },
+    "max_cards": {
+      "label": "Cards to show"
+    },
+    "width": {
+      "label": "Width"
+    }
+  }
+}

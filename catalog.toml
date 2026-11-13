@@ -1,0 +1,12 @@
+# Каталог источника плагинов Noctalia (noctalia msg plugins source add … path <репо>)
+[[plugin]]
+id           = "pvs/kanban"
+name         = "Kanban"
+version      = "0.2.0"
+author       = "pvs"
+license      = "MIT"
+icon         = "layout-kanban"
+description  = "Канбан-доски в панели: карточки-стикеры, хранение в markdown формата Obsidian Kanban."
+plugin_api   = 43
+tags         = ["productivity"]
+dependencies = ["imagemagick"]

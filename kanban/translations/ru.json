@@ -1,0 +1,19 @@
+{
+  "settings": {
+    "board_path": {
+      "label": "Доска по умолчанию (markdown Obsidian Kanban)"
+    },
+    "font_path": {
+      "label": "Шрифт карточек (.ttf/.otf, пусто — шрифт оболочки)"
+    },
+    "boards_dir": {
+      "label": "Папка с досками (каждый .md Obsidian Kanban внутри — вкладка)"
+    },
+    "max_cards": {
+      "label": "Сколько карточек показывать"
+    },
+    "width": {
+      "label": "Ширина"
+    }
+  }
+}

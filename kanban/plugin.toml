@@ -1,0 +1,80 @@
+id          = "pvs/kanban"
+name        = "Kanban"
+version     = "0.2.0"
+plugin_api  = 43
+author      = "pvs"
+license     = "MIT"
+icon        = "layout-kanban"
+description = "Канбан-доска в панели: карточки-стикеры, хранение в markdown формата Obsidian Kanban."
+tags        = ["productivity"]
+dependencies = ["imagemagick"]
+
+# Доска. Плавающая, по центру; высота фиксированная — колонки скроллятся сами.
+[[panel]]
+id        = "panel"
+entry     = "panel.luau"
+width     = 1240
+height    = 780
+placement = "floating"
+position  = "center"
+keyboard_focus = "on_demand"
+
+# Фон: быстрое добавление (IPC add) и напоминания о сроках.
+[[service]]
+id    = "service"
+entry = "service.luau"
+
+# Значок на панели: число карточек «в работе», красный — есть просроченные.
+[[widget]]
+id    = "bar"
+entry = "bar.luau"
+
+# Лаунчер: /kb текст — добавить карточку, поиск по карточкам.
+[[launcher_provider]]
+id     = "launcher"
+entry  = "launcher.luau"
+prefix = "kb"
+glyph  = "layout-kanban"
+
+# Виджет стола: карточки «в работе» мини-листками.
+[[desktop_widget]]
+id    = "desk"
+entry = "desk.luau"
+
+  [[desktop_widget.setting]]
+  key       = "max_cards"
+  type      = "int"
+  label_key = "settings.max_cards.label"
+  default   = 6
+  min       = 1
+  max       = 20
+
+  [[desktop_widget.setting]]
+  key       = "width"
+  type      = "int"
+  label_key = "settings.width.label"
+  default   = 240
+  min       = 160
+  max       = 600
+
+# Файл доски — markdown плагина Obsidian Kanban (можно открывать и в Obsidian).
+[[setting]]
+key     = "board_path"
+type    = "string"
+label_key = "settings.board_path.label"
+default = "~/Documents/obsidian/kanban-boards/Канбан.md"
+
+# Папка с досками: все .md с «kanban-plugin: board» внутри (рекурсивно) —
+# вкладки панели; новые доски создаются тут.
+[[setting]]
+key     = "boards_dir"
+type    = "string"
+label_key = "settings.boards_dir.label"
+default = "~/Documents/obsidian/kanban-boards"
+
+# Рукописный шрифт карточек (нужна кириллица). Пусто — шрифт оболочки.
+[[setting]]
+key     = "font_path"
+type    = "string"
+label_key = "settings.font_path.label"
+default = "~/.local/share/fonts/Pangolin-Regular.ttf"
