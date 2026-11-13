@@ -1,6 +1,6 @@
 id          = "pvs/kanban"
 name        = "Kanban"
-version     = "0.2.0"
+version     = "0.3.0"
 plugin_api  = 43
 author      = "pvs"
 license     = "MIT"
@@ -9,12 +9,14 @@ description = "Канбан-доска в панели: карточки-сти�
 tags        = ["productivity"]
 dependencies = ["imagemagick"]
 
-# Доска. Плавающая, по центру; высота фиксированная — колонки скроллятся сами.
+# Доска. Плавающая, по центру. Размер задаёт настройка size_percent (% от
+# видимой области монитора): служба пересчитывает width/height ниже (строки с
+# меткой kanban:size) и перезагружает конфиг — в API нет размера на лету.
 [[panel]]
 id        = "panel"
 entry     = "panel.luau"
-width     = 1240
-height    = 780
+width     = 2176  # kanban:size
+height    = 1195  # kanban:size
 placement = "floating"
 position  = "center"
 keyboard_focus = "exclusive"
@@ -22,6 +24,33 @@ keyboard_focus = "exclusive"
 # n — новая карточка, p — помидор, 1–9 — в колонку N, Ctrl+Z — отмена, Ctrl+F — поиск.
 capture_keys = ["Left", "Right", "Up", "Down", "Return", "Delete", "n", "p",
                 "1", "2", "3", "4", "5", "6", "7", "8", "9", "ctrl+z", "ctrl+f"]
+
+  [[panel.setting]]
+  key          = "fullscreen"
+  type         = "bool"
+  label_key    = "settings.fullscreen.label"
+  default      = false
+  visible_when = { key = "fullscreen", values = ["__never__"] }
+
+# Та же доска на весь экран (вся область между панелями). Кнопка в шапке
+# переключает обычную и полноэкранную.
+[[panel]]
+id        = "full"
+entry     = "panel.luau"
+width     = "fill"
+height    = "fill"
+placement = "floating"
+position  = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Left", "Right", "Up", "Down", "Return", "Delete", "n", "p",
+                "1", "2", "3", "4", "5", "6", "7", "8", "9", "ctrl+z", "ctrl+f"]
+
+  [[panel.setting]]
+  key          = "fullscreen"
+  type         = "bool"
+  label_key    = "settings.fullscreen.label"
+  default      = true
+  visible_when = { key = "fullscreen", values = ["__never__"] }
 
 # Фон: быстрое добавление (IPC add) и напоминания о сроках.
 [[service]]
@@ -67,6 +96,15 @@ key     = "board_path"
 type    = "string"
 label_key = "settings.board_path.label"
 default = "~/Documents/obsidian/kanban-boards/Канбан.md"
+
+# Размер окна доски, % от видимой области монитора (без панелей).
+[[setting]]
+key       = "size_percent"
+type      = "int"
+label_key = "settings.size_percent.label"
+default   = 85
+min       = 40
+max       = 100
 
 # Папка с досками: все .md с «kanban-plugin: board» внутри (рекурсивно) —
 # вкладки панели; новые доски создаются тут.

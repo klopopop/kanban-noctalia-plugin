@@ -67,7 +67,7 @@ end
 
 function onActivate(id)
   if id == "open" or id == "hint" then
-    noctalia.togglePanel("pvs/kanban:panel")
+    store.openBoard()
     return
   end
   local li, text = string.match(id, "^add:(%d+):(.*)$")

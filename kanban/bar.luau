@@ -86,7 +86,7 @@ local function refresh(force)
 end
 
 function onClick()
-  noctalia.togglePanel("pvs/kanban:panel")
+  store.openBoard()
 end
 
 function onRightClick()

@@ -14,6 +14,12 @@
     },
     "width": {
       "label": "Width"
+    },
+    "size_percent": {
+      "label": "Board window size, % of the visible screen area"
+    },
+    "fullscreen": {
+      "label": "Fullscreen"
     }
   }
 }

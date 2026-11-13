@@ -52,7 +52,7 @@ local function hash(text)
 end
 
 local function openBoard()
-  noctalia.togglePanel("pvs/kanban:panel")
+  store.openBoard()
 end
 
 local function miniSticker(card, paper)

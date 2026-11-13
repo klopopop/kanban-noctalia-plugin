@@ -895,11 +895,19 @@ local STICKER_H = 172
 -- Ширина доски внутри панели (лог. px) — от неё считаем, сколько листков
 -- влезает в ряд и не пора ли их уменьшить (при 6+ колонках).
 local BOARD_W = 1210
+-- Эта панель — полноэкранная (entry «full») или обычная (entry «panel»)
+local IS_FULL = noctalia.getConfig("fullscreen") == true
+local ENTRY_ID = IS_FULL and "pvs/kanban:full" or "pvs/kanban:panel"
 local LANE_GAP = 14
 cellW, cellH, perRow = STICKER_W, STICKER_H, 2
 local laneInner = 360
 
 local function layoutFor(n)
+  -- ширина доски — от настоящего размера окна (его считает служба)
+  local size = type(st.size) == "table" and st.size or nil
+  if size ~= nil then
+    BOARD_W = math.max(600, (IS_FULL and size.fullW or size.w) - 30)
+  end
   local inner = (BOARD_W - (n - 1) * LANE_GAP) / n - 24 - 8
   laneInner = inner
   perRow = math.max(1, math.floor((inner + 6) / (STICKER_W + 6)))
@@ -1662,6 +1670,11 @@ render = function()
       iconButton("refresh", "Перечитать файл", function() load(); editingId, addingLane = nil, nil; render() end),
       iconButton("external-link", "Открыть в Obsidian", openInObsidian),
       iconButton("settings", "Настройки: папка с досками, доска по умолчанию, шрифт", function() panel.close(); noctalia.openSettings() end),
+      iconButton(IS_FULL and "arrows-minimize" or "arrows-maximize", IS_FULL and "Обычный размер" or "На весь экран", function()
+        store.setFull(not IS_FULL)
+        panel.close()
+        store.openBoard(true)
+      end),
       iconButton("x", "Закрыть (Esc)", function() panel.close() end),
     }),
     tagBar(),
@@ -1672,6 +1685,7 @@ end
 -- ── Жизненный цикл ──────────────────────────────────────────────────────────
 
 function onOpen()
+  noctalia.state.set("kanban.open", ENTRY_ID)
   reloadIfChanged()
   st = store.readState()
   scanBoards()
@@ -1680,6 +1694,7 @@ function onOpen()
 end
 
 function onClose()
+  noctalia.state.set("kanban.open", "")
   editingId, addingLane = nil, nil
 end
 

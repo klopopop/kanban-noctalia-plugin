@@ -23,23 +23,48 @@ function M.boardName(p)
 end
 
 -- Файл состояния: текущая доска, цвета карточек, отметки напоминаний.
-function M.readState()
+-- Файл состояния правят несколько частей сразу (панель, служба, значок), а
+-- writeFile не атомарен: читатель может застать файл недописанным. Поэтому:
+-- не разобралось — перечитать; так и не вышло — последнее удачное, и
+-- updateState в таком случае ничего не пишет (иначе затрёт состояние пустым).
+local lastGood = nil
+
+local function readStateSafe()
   if not noctalia.fileExists(M.STATE_FILE) then
-    return {}
+    return {}, true
   end
-  local raw = noctalia.readFile(M.STATE_FILE)
-  local st = raw and noctalia.json.decode(raw) or nil
-  return type(st) == "table" and st or {}
+  for _ = 1, 8 do
+    local raw = noctalia.readFile(M.STATE_FILE)
+    if raw ~= nil and raw ~= "" then
+      local st = noctalia.json.decode(raw)
+      if type(st) == "table" then
+        lastGood = st
+        return st, true
+      end
+    end
+  end
+  return lastGood or {}, false
+end
+
+function M.readState()
+  local st = readStateSafe()
+  return st
 end
 
 function M.writeState(st)
   noctalia.writeFile(M.STATE_FILE, noctalia.json.encode(st))
+  lastGood = st
 end
 
 function M.updateState(fn)
-  local st = M.readState()
+  local st, ok = readStateSafe()
+  if not ok then
+    noctalia.log("kanban: файл состояния не прочитался — правка пропущена")
+    return false
+  end
   fn(st)
   M.writeState(st)
+  return true
 end
 
 -- Текущая доска. Настройка board_path — доска по умолчанию; если её поменять
@@ -300,6 +325,21 @@ function M.respawn(board, card)
   end
   table.insert(board.lanes[1].cards, boardLib.newCard(nextText, board.lanes[1].complete))
   return true
+end
+
+-- ── Открыть доску ──
+-- Всё открывает служба: она знает, обычная панель или на весь экран, и
+-- перед открытием подгоняет размер окна под монитор.
+function M.openBoard(force)
+  noctalia.runAsync({ "noctalia", "msg", "plugin", "pvs/kanban:service", "all", force and "open-force" or "open" })
+end
+
+function M.isFull()
+  return M.readState().fullscreen == true
+end
+
+function M.setFull(on)
+  M.updateState(function(st) st.fullscreen = on and true or nil end)
 end
 
 return M

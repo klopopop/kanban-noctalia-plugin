@@ -11,7 +11,8 @@
 --   • помидор: конец таймера — уведомление.
 --
 -- IPC: add <текст> · check (сроки сейчас) · summary (сводка сейчас) ·
---      shot <png> (карточка со скриншотом) · pomo-stop
+--      shot <png> (карточка со скриншотом) · pomo-stop ·
+--      open (открыть/закрыть доску; Win+K) · open-force (открыть)
 
 local store = require("./store.luau")
 local boardLib = require("./board.luau")
@@ -156,6 +157,85 @@ local function checkPomo()
   end
 end
 
+-- ── Окно доски ──
+-- Размер обычной панели: size_percent от видимой области сфокусированного
+-- монитора (логические px минус занятые панелями края). Пишется в
+-- plugin.toml (строки «# kanban:size») + перезагрузка конфига — других
+-- способов задать размер панели в API нет.
+local MANIFEST = (noctalia.pluginDir() or noctalia.expandPath("~/.local/share/noctalia/plugins/kanban")) .. "/plugin.toml"
+
+local function fitPanel(cb, openAfter)
+  noctalia.runAsync({ "hyprctl", "monitors", "-j" }, function(result)
+    local mons = noctalia.json.decode(result.stdout or "") or {}
+    local mon = nil
+    for _, m in ipairs(mons) do
+      if m.focused then
+        mon = m
+      end
+    end
+    mon = mon or mons[1]
+    if mon == nil then
+      cb(false)
+      return
+    end
+    local scale = tonumber(mon.scale) or 1
+    local rot = (tonumber(mon.transform) or 0) % 2 == 1
+    local lw = math.floor((rot and mon.height or mon.width) / scale + 0.5)
+    local lh = math.floor((rot and mon.width or mon.height) / scale + 0.5)
+    local r = mon.reserved or { 0, 0, 0, 0 }
+    local aw = lw - (r[1] or 0) - (r[3] or 0)
+    local ah = lh - (r[2] or 0) - (r[4] or 0)
+    local pct = math.max(40, math.min(100, tonumber(noctalia.getConfig("size_percent")) or 85))
+    local w = math.floor(aw * pct / 100)
+    local h = math.floor(ah * pct / 100)
+    store.updateState(function(st)
+      st.size = { w = w, h = h, fullW = aw, fullH = ah }
+    end)
+    local raw = noctalia.readFile(MANIFEST) or ""
+    local n = 0
+    local fixed = string.gsub(raw, "(width%s*=%s*)%d+(%s*# kanban:size)", function(a, b)
+      return a .. w .. b
+    end)
+    fixed = string.gsub(fixed, "(height%s*=%s*)%d+(%s*# kanban:size)", function(a, b)
+      n += 1
+      return a .. h .. b
+    end)
+    if fixed ~= raw and n > 0 then
+      -- плагин перезапустится вместе со службой, колбэк не дождётся —
+      -- открыть доску после перезапуска (см. конец файла)
+      if openAfter then
+        store.updateState(function(st) st.openPending = noctalia.nowMs() end)
+      end
+      noctalia.writeFile(MANIFEST, fixed)
+      noctalia.runAsync({ "noctalia", "msg", "config-reload" }, function()
+        -- дать хосту пересоздать панель с новым размером
+        noctalia.runAsync({ "sleep", "0.4" }, function() cb(true) end)
+      end)
+    else
+      cb(false)
+    end
+  end)
+end
+
+local function openBoard(force)
+  local open = noctalia.state.get("kanban.open")
+  if not force and type(open) == "string" and open ~= "" then
+    noctalia.togglePanel(open)
+    return
+  end
+  if store.isFull() then
+    noctalia.togglePanel("pvs/kanban:full")
+    return
+  end
+  fitPanel(function()
+    noctalia.togglePanel("pvs/kanban:panel")
+  end, true)
+end
+
+function onConfigChanged()
+  fitPanel(function() end)
+end
+
 function onIpc(event, payload)
   if event == "add" then
     add(payload or "")
@@ -175,6 +255,10 @@ function onIpc(event, payload)
         noctalia.notifyError("Канбан", "Скриншот не сохранился: " .. tostring(result.stderr))
       end
     end)
+  elseif event == "open" then
+    openBoard(false)
+  elseif event == "open-force" then
+    openBoard(true)
   elseif event == "pomo-stop" then
     store.stopPomo()
   end
@@ -184,7 +268,22 @@ function update()
   checkPomo()
   if noctalia.nowMs() - lastCheck >= CHECK_EVERY_MS then
     checkDue(false, false)
+fitPanel(function() end)
   end
 end
 
 checkDue(false, false)
+fitPanel(function() end)
+
+-- Открыть доску, если перед перезапуском просили (размер окна поменялся).
+do
+  local pending = store.readState().openPending
+  if type(pending) == "number" then
+    store.updateState(function(st) st.openPending = nil end)
+    if noctalia.nowMs() - pending < 15000 then
+      noctalia.runAsync({ "sleep", "0.5" }, function()
+        noctalia.togglePanel("pvs/kanban:panel")
+      end)
+    end
+  end
+end
