@@ -85,6 +85,23 @@ local NAMED_ORDER = { "yellow", "orange", "pink", "red", "purple", "blue", "gree
 -- Фильтр по метке (#тег), nil — все карточки
 local tagFilter = nil
 
+-- Отмена: стек прежних содержимых файла (до каждой записи из панели).
+-- Внешняя правка файла (Obsidian, git) или смена доски стек очищает.
+local UNDO_MAX = 50
+local undoStack = {}
+local lastSaved = nil -- текст файла после последнего чтения/записи
+
+-- Выбор с клавиатуры: колонка и карточка (id), nil — ничего не выбрано
+local sel = nil
+
+-- Раскладка сетки листков (считается в layoutFor при каждой отрисовке)
+local cellW, cellH, perRow = 176, 172, 2
+
+-- Поиск: совпавшие карточки как есть, остальные тускнеют
+local searchOpen = false
+local searchText = ""
+local searchSeq = 0
+
 local render -- вперёд
 
 -- ── Файл ────────────────────────────────────────────────────────────────────
@@ -105,11 +122,19 @@ local function sameStamp(a, b)
 end
 
 local function save()
-  local ok, err = noctalia.writeFile(path, boardLib.serialize(board))
+  local text = boardLib.serialize(board)
+  local ok, err = noctalia.writeFile(path, text)
   if not ok then
     noctalia.notifyError("Канбан", "Не удалось сохранить " .. path .. ": " .. tostring(err))
     return
   end
+  if lastSaved ~= nil and lastSaved ~= text then
+    table.insert(undoStack, lastSaved)
+    if #undoStack > UNDO_MAX then
+      table.remove(undoStack, 1)
+    end
+  end
+  lastSaved = text
   stamp = stampOf()
   store.bump()
 end
@@ -128,6 +153,7 @@ local function load()
     return
   end
   board = boardLib.parse(raw)
+  lastSaved = raw
   stamp = stampOf()
   colors = store.colors()
 end
@@ -142,6 +168,7 @@ local function reloadIfChanged()
     return false
   end
   load()
+  undoStack = {}
   editingId, addingLane, laneEdit = nil, nil, nil
   return true
 end
@@ -365,6 +392,214 @@ local function commitAdd(value)
   save()
 end
 
+-- ── Отмена ──
+
+local function undo()
+  if editingId ~= nil or addingLane ~= nil or laneEdit ~= nil or boardEdit then
+    return
+  end
+  if reloadIfChanged() then
+    noctalia.notify("Канбан", "Доска изменилась в другом месте — отменять нечего")
+    render()
+    return
+  end
+  local text = table.remove(undoStack)
+  if text == nil then
+    noctalia.notify("Канбан", "Нечего отменять")
+    return
+  end
+  local ok, err = noctalia.writeFile(path, text)
+  if not ok then
+    table.insert(undoStack, text)
+    noctalia.notifyError("Канбан", "Не удалось отменить: " .. tostring(err))
+    return
+  end
+  board = boardLib.parse(text)
+  lastSaved = text
+  stamp = stampOf()
+  store.bump()
+  sel = nil
+  render()
+end
+
+-- ── Поиск ──
+
+-- Нижний регистр для латиницы и кириллицы (string.lower кириллицу не знает).
+local function lowerRu(text)
+  local t = string.lower(text or "")
+  t = string.gsub(t, "\208([\144-\159])", function(c) return "\208" .. string.char(string.byte(c) + 32) end)
+  t = string.gsub(t, "\208([\160-\175])", function(c) return "\209" .. string.char(string.byte(c) - 32) end)
+  t = string.gsub(t, "\208\129", "\209\145")
+  return t
+end
+
+local function matchesSearch(card)
+  local q = noctalia.string.trim(searchText)
+  if not searchOpen or q == "" then
+    return true
+  end
+  return string.find(lowerRu(card.text), lowerRu(q), 1, true) ~= nil
+end
+
+local function openSearch()
+  editingId, addingLane, laneEdit, boardEdit = nil, nil, nil, false
+  searchOpen = true
+  searchSeq += 1
+  render()
+end
+
+local function closeSearch()
+  searchOpen = false
+  searchText = ""
+  render()
+end
+
+-- ── Клавиатура ──
+
+local function cardVisible(card)
+  if tagFilter == nil then
+    return true
+  end
+  for _, tag in ipairs(boardLib.tagsOf(card.text)) do
+    if tag == tagFilter then
+      return true
+    end
+  end
+  return false
+end
+
+local function visibleCards(li)
+  local out = {}
+  local lane = board.lanes[li]
+  if lane == nil then
+    return out
+  end
+  for _, card in ipairs(lane.cards) do
+    if cardVisible(card) then
+      table.insert(out, card)
+    end
+  end
+  return out
+end
+
+local function selIndex()
+  if sel == nil then
+    return nil
+  end
+  for i, card in ipairs(visibleCards(sel.lane)) do
+    if card.id == sel.id then
+      return i
+    end
+  end
+  return nil
+end
+
+local function selectAt(li, i)
+  local cards = visibleCards(li)
+  if #cards == 0 then
+    sel = { lane = li, id = nil }
+  else
+    i = math.max(1, math.min(i, #cards))
+    sel = { lane = li, id = cards[i].id }
+  end
+  render()
+end
+
+-- Стрелки ходят по сетке: в ряду по perRow листков, на краю — в соседнюю колонку.
+local function moveSel(key)
+  if sel == nil or board.lanes[sel.lane] == nil then
+    for li = 1, #board.lanes do
+      if #visibleCards(li) > 0 then
+        selectAt(li, 1)
+        return
+      end
+    end
+    selectAt(1, 1)
+    return
+  end
+  local li = sel.lane
+  local i = selIndex() or 1
+  local n = #visibleCards(li)
+  local col = (i - 1) % perRow
+  local row = (i - 1) // perRow
+  if key == "Right" then
+    if col < perRow - 1 and i + 1 <= n then
+      selectAt(li, i + 1)
+    elseif li < #board.lanes then
+      selectAt(li + 1, row * perRow + 1)
+    end
+  elseif key == "Left" then
+    if col > 0 then
+      selectAt(li, i - 1)
+    elseif li > 1 then
+      selectAt(li - 1, row * perRow + perRow)
+    end
+  elseif key == "Up" then
+    if i - perRow >= 1 then
+      selectAt(li, i - perRow)
+    end
+  elseif key == "Down" then
+    if i + perRow <= n then
+      selectAt(li, i + perRow)
+    elseif row < (n - 1) // perRow then
+      selectAt(li, n)
+    end
+  end
+end
+
+local function selectedCard()
+  if sel == nil or sel.id == nil then
+    return nil
+  end
+  local _, _, card = findCard(sel.id)
+  return card
+end
+
+function onKey(chord, pressed)
+  if not pressed then
+    return
+  end
+  if chord == "ctrl+z" then
+    undo()
+    return
+  end
+  if chord == "ctrl+f" then
+    openSearch()
+    return
+  end
+  -- пока открыто поле правки — клавиши его, не доски
+  if editingId ~= nil or addingLane ~= nil or laneEdit ~= nil or boardEdit then
+    return
+  end
+  if chord == "Left" or chord == "Right" or chord == "Up" or chord == "Down" then
+    moveSel(chord)
+  elseif chord == "Return" then
+    local card = selectedCard()
+    if card ~= nil then
+      startEdit(card)
+    end
+  elseif chord == "Delete" then
+    local card = selectedCard()
+    if card ~= nil then
+      local i = selIndex() or 1
+      local li = sel.lane
+      deleteCard(card.id)
+      selectAt(li, i)
+    end
+  elseif chord == "n" then
+    startAdd(sel ~= nil and sel.lane or 1)
+  else
+    local d = tonumber(string.match(chord, "^(%d)$"))
+    local card = selectedCard()
+    if d ~= nil and card ~= nil and board.lanes[d] ~= nil and guard() then
+      moveCard(card.id, d, #board.lanes[d].cards + 1)
+      sel = { lane = d, id = card.id }
+      render()
+      save()
+    end
+  end
+end
+
 -- ── Колонки ──
 
 local function startLaneEdit(li)
@@ -509,6 +744,8 @@ local function switchBoard(p)
   boardDeleteArmed = nil
   rememberPath(p)
   tagFilter = nil
+  undoStack = {}
+  sel = nil
   load()
   render()
 end
@@ -620,7 +857,7 @@ local STICKER_H = 172
 -- влезает в ряд и не пора ли их уменьшить (при 6+ колонках).
 local BOARD_W = 1210
 local LANE_GAP = 14
-local cellW, cellH, perRow = STICKER_W, STICKER_H, 2
+cellW, cellH, perRow = STICKER_W, STICKER_H, 2
 local laneInner = 360
 
 local function layoutFor(n)
@@ -874,6 +1111,7 @@ end
 
 -- Листок можно тащить; бросок на листок — встать перед ним.
 local function cardView(card, li, ci, sign)
+  local selected = sel ~= nil and sel.id == card.id
   return ui.dropZone({
     key = "at-" .. card.id,
     accepts = { "card" },
@@ -881,6 +1119,11 @@ local function cardView(card, li, ci, sign)
     onDrop = onDrop,
     width = cellW,
     height = cellH,
+    radius = 12,
+    fill = selected and "primary/0.16" or nil,
+    border = selected and "primary" or nil,
+    borderWidth = selected and 2 or nil,
+    opacity = matchesSearch(card) and 1 or 0.22,
   }, {
     ui.dragSource({
       key = "drag-" .. card.id,
@@ -1154,6 +1397,37 @@ local function tagBar()
   return ui.row({ gap = 4, align = "center" }, chips)
 end
 
+local function searchBox()
+  if not searchOpen then
+    return iconButton("search", "Поиск по доске (Ctrl+F)", openSearch)
+  end
+  local q = noctalia.string.trim(searchText)
+  local found = 0
+  if q ~= "" then
+    for _, lane in ipairs(board.lanes) do
+      for _, card in ipairs(lane.cards) do
+        if matchesSearch(card) then
+          found += 1
+        end
+      end
+    end
+  end
+  return ui.row({ gap = 4, align = "center" }, {
+    ui.input({
+      key = "search-" .. searchSeq,
+      value = searchText,
+      placeholder = "Поиск…",
+      focus = true,
+      width = 220,
+      controlSize = "sm",
+      fontSize = 14,
+      onChange = function(v) searchText = v; render() end,
+    }),
+    ui.label({ text = q ~= "" and tostring(found) or "", fontSize = 13, color = "on_surface_variant" }),
+    iconButton("x", "Закрыть поиск", closeSearch),
+  })
+end
+
 render = function()
   if board == nil then
     load()
@@ -1169,6 +1443,8 @@ render = function()
       ui.glyph({ name = "layout-kanban", size = 22, color = "primary" }),
       boardTabs(),
       ui.spacer({ flexGrow = 1 }),
+      searchBox(),
+      iconButton("arrow-back-up", #undoStack > 0 and ("Отменить (Ctrl+Z), шагов: " .. #undoStack) or "Отменить (Ctrl+Z) — нечего", undo),
       ui.dropZone({
         key = "trash",
         accepts = { "card" },
@@ -1223,5 +1499,15 @@ function update()
   end
   if reloadIfChanged() then
     render()
+  end
+end
+
+-- Для скриптов и проверки: noctalia msg plugin pvs/kanban:panel all key Right
+-- (та же обработка, что у нажатия в панели; работает, пока панель открыта).
+function onIpc(event, payload)
+  if event == "key" then
+    onKey(noctalia.string.trim(payload or ""), true)
+  elseif event == "undo" then
+    undo()
   end
 end
