@@ -477,15 +477,31 @@ local function cardVisible(card)
   return false
 end
 
+-- Карточки колонки в порядке показа: сначала «!!», потом «!», дальше как в файле.
+-- Индекс ci — позиция в файле (для бросков «встать перед»).
+function sortedCards(lane)
+  local list = {}
+  for ci, card in ipairs(lane.cards) do
+    table.insert(list, { card = card, ci = ci, pr = boardLib.priority(card.text) })
+  end
+  table.sort(list, function(a, b)
+    if a.pr ~= b.pr then
+      return a.pr > b.pr
+    end
+    return a.ci < b.ci
+  end)
+  return list
+end
+
 local function visibleCards(li)
   local out = {}
   local lane = board.lanes[li]
   if lane == nil then
     return out
   end
-  for _, card in ipairs(lane.cards) do
-    if cardVisible(card) then
-      table.insert(out, card)
+  for _, item in ipairs(sortedCards(lane)) do
+    if cardVisible(item.card) then
+      table.insert(out, item.card)
     end
   end
   return out
@@ -1006,6 +1022,51 @@ local function pomoButton(card)
   return iconButton("clock-play", "Помидор 25 минут (p)", function() startPomo(card) end)
 end
 
+-- Пункты чек-листа из текста правки — переключатели; «+ пункт» дописывает строку.
+function checklistView()
+  local items = boardLib.checklist(editText)
+  local rows = {}
+  for i, it in ipairs(items) do
+    table.insert(rows, ui.row({ key = "chk-" .. i, gap = 8, align = "center" }, {
+      ui.toggle({ checked = it.done, onChange = function()
+        editText = boardLib.toggleItem(editText, i)
+        editSeq += 1
+        render()
+      end }),
+      ui.label({ text = it.label, fontSize = 14, color = INK, maxLines = 2 }),
+    }))
+  end
+  table.insert(rows, ui.button({
+    text = #items > 0 and "пункт" or "чек-лист", glyph = "list-check", variant = "ghost", controlSize = "sm", contentAlign = "start",
+    onClick = function()
+      editText = noctalia.string.trim(editText) .. "\n- [ ] "
+      editSeq += 1
+      render()
+    end,
+  }))
+  return ui.column({ gap = 2 }, rows)
+end
+
+function linksView()
+  local links = boardLib.links(editText)
+  if #links == 0 then
+    return ui.box({ height = 1, fill = "#00000000" })
+  end
+  local btns = { ui.glyph({ name = "paperclip", size = 14, color = INK }) }
+  for i, link in ipairs(links) do
+    table.insert(btns, ui.button({
+      key = "lnk-" .. i,
+      text = link.label,
+      glyph = link.kind == "url" and "world" or "notes",
+      variant = "ghost",
+      controlSize = "sm",
+      tooltip = link.target,
+      onClick = function() openLink(link) end,
+    }))
+  end
+  return ui.row({ gap = 2, align = "center" }, btns)
+end
+
 local function editorView(card, li)
   local id = card.id
   local due = boardLib.dueOf(editText)
@@ -1029,6 +1090,8 @@ local function editorView(card, li)
       dueChip("+неделя", boardLib.today(7)),
       due and iconButton("calendar-off", "Убрать срок", function() setEditDue(nil) end) or nil,
     }),
+    checklistView(),
+    linksView(),
     colorChips(card),
     ui.row({ gap = 2, align = "center" }, {
       iconButton("arrow-left", "В колонку левее", function() shiftCard(id, -1) end),
@@ -1092,6 +1155,16 @@ local failed = {}
 -- Подпись листка: срок и метки; просроченное — красным (и скотч красный).
 local function cardFooter(card)
   local parts = {}
+  local items = boardLib.checklist(card.text)
+  if #items > 0 then
+    local done = 0
+    for _, it in ipairs(items) do
+      if it.done then
+        done += 1
+      end
+    end
+    table.insert(parts, done .. "/" .. #items)
+  end
   local due = boardLib.dueOf(card.text)
   local days = due and boardLib.daysUntil(due)
   local late = days ~= nil and days <= 0 and not card.done
@@ -1127,16 +1200,62 @@ local function cardFooter(card)
   return footer, "#F2EEE3CC", "#22262F99"
 end
 
+-- Корень хранилища Obsidian: ближайшая папка вверх, где есть .obsidian
+local function vaultRoot()
+  local dir = string.match(path, "^(.*)/[^/]+$")
+  while dir ~= nil and dir ~= "" do
+    if noctalia.fileExists(dir .. "/.obsidian") then
+      return dir
+    end
+    dir = string.match(dir, "^(.*)/[^/]+$")
+  end
+  return nil
+end
+
+-- Картинка карточки: рядом с доской, в attachments папки досок, в корне хранилища.
+function resolveImage(name)
+  if name == nil or name == "" then
+    return nil
+  end
+  name = noctalia.string.urlDecode(name)
+  if string.sub(name, 1, 1) == "/" then
+    return noctalia.fileExists(name) and name or nil
+  end
+  local here = string.match(path, "^(.*)/[^/]+$") or "."
+  local root = vaultRoot()
+  for _, dir in ipairs({ here, here .. "/attachments", boardsDir() .. "/attachments", root or "", root and (root .. "/attachments") or "" }) do
+    if dir ~= "" and noctalia.fileExists(dir .. "/" .. name) then
+      return dir .. "/" .. name
+    end
+  end
+  return nil
+end
+
+function openLink(link)
+  if link.kind == "url" then
+    noctalia.runAsync({ "xdg-open", link.target })
+  else
+    local root = vaultRoot()
+    local vault = root and string.match(root, "([^/]+)$") or ""
+    noctalia.runAsync({ "xdg-open", "obsidian://open?vault=" .. noctalia.string.urlEncode(vault) .. "&file=" .. noctalia.string.urlEncode(link.target) })
+  end
+  panel.close()
+end
+
 local function imageSticker(card, li, sign)
   local seed = card.text
   local paper = shiftColor(cardPaper(card, li), jitter(seed, "paper", 6))
   local footer, tapeColor, footColor = cardFooter(card)
+  local clip = #boardLib.links(card.text) > 0 and "1" or "0"
+  local pr = boardLib.priority(card.text)
+  local pin = pr == 2 and "#E5484D" or (pr == 1 and "#F59E0B" or "")
+  local image = resolveImage(boardLib.imageOf(card.text)) or ""
   -- сторону задаёт место в сетке (шахматка), величину 0.8–3.8° — текст
   local angle = string.format("%.1f", sign * (8 + hash("angle|" .. seed .. "|tilt") % 31) / 10)
   local tapeAngle = tostring(jitter(seed, "tapea", 6))
   local tapeShift = tostring(jitter(seed, "tapex", 22))
   local tape = (hash("tape|" .. seed) % 5 ~= 0) and "1" or "0"
-  local key = tostring(hash(table.concat({ seed, paper, angle, tapeAngle, tapeShift, tape, fontFile, RENDER_SCALE, footer, tapeColor, footColor, "v4" }, "|")))
+  local key = tostring(hash(table.concat({ seed, paper, angle, tapeAngle, tapeShift, tape, fontFile, RENDER_SCALE, footer, tapeColor, footColor, clip, pin, image, "v5" }, "|")))
   local file = CACHE .. "/" .. key .. ".png"
 
   if noctalia.fileExists(file) then
@@ -1144,7 +1263,7 @@ local function imageSticker(card, li, sign)
   end
   if not pending[key] and not failed[key] then
     pending[key] = true
-    noctalia.runAsync({ TOOL, file, boardLib.bodyOf(seed), paper, angle, tapeAngle, tapeShift, tape, fontFile, tostring(RENDER_SCALE), footer, tapeColor, footColor }, function(result)
+    noctalia.runAsync({ TOOL, file, boardLib.bodyOf(seed), paper, angle, tapeAngle, tapeShift, tape, fontFile, tostring(RENDER_SCALE), footer, tapeColor, footColor, clip, pin, image }, function(result)
       pending[key] = nil
       if result.exitCode ~= 0 then
         failed[key] = true
@@ -1192,7 +1311,8 @@ local function cardGrid(lane, li)
       cells = {}
     end
   end
-  for ci, card in ipairs(lane.cards) do
+  for pos, item in ipairs(sortedCards(lane)) do
+    local card, ci = item.card, item.ci
     local hidden = false
     if tagFilter ~= nil and card.id ~= editingId then
       hidden = true
@@ -1210,7 +1330,7 @@ local function cardGrid(lane, li)
     else
       -- шахматка: наклон в разные стороны, а листок с наклоном вправо ещё и
       -- ниже соседа; сверху — свой случайный сдвиг от текста
-      local sign = ((ci + (ci - 1) // 2) % 2 == 0) and 1 or -1
+      local sign = ((pos + (pos - 1) // 2) % 2 == 0) and 1 or -1
       local drop = (sign > 0 and 12 or 1) + hash(card.text .. "|drop") % 11
       table.insert(cells, ui.column({ gap = 0 }, { ui.box({ height = drop, fill = "#00000000" }), cardView(card, li, ci, sign) }))
       if #cells == perRow then

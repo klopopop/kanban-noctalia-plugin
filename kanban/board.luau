@@ -217,11 +217,96 @@ function M.tagsOf(text)
   return tags
 end
 
--- Текст для листка: без срока и меток (они рисуются отдельно).
+-- ── Содержимое карточки ──
+
+-- Чек-лист: строки «- [ ] пункт» / «- [x] пункт» в тексте карточки.
+function M.checklist(text)
+  local items = {}
+  for line in string.gmatch((text or "") .. "\n", "([^\n]*)\n") do
+    local mark, label = string.match(line, "^%s*[-*]%s+%[(.)%]%s*(.*)$")
+    if mark ~= nil then
+      table.insert(items, { done = mark ~= " ", label = label })
+    end
+  end
+  return items
+end
+
+-- Отметить/снять n-й пункт чек-листа.
+function M.toggleItem(text, n)
+  local i = 0
+  local out = {}
+  for line in string.gmatch((text or "") .. "\n", "([^\n]*)\n") do
+    local pre, mark, rest = string.match(line, "^(%s*[-*]%s+%[)(.)(%].*)$")
+    if mark ~= nil then
+      i += 1
+      if i == n then
+        line = pre .. (mark == " " and "x" or " ") .. rest
+      end
+    end
+    table.insert(out, line)
+  end
+  return table.concat(out, "\n")
+end
+
+-- Ссылки: [[Заметка]] / [[Заметка|подпись]] и http(s)://…
+function M.links(text)
+  local out = {}
+  for inner in string.gmatch(text or "", "%[%[([^%]]+)%]%]") do
+    local target, alias = string.match(inner, "^([^|]+)|(.+)$")
+    target = target or inner
+    -- ![[картинка]] — не ссылка
+    local pos = string.find(text, "!%[%[" .. string.gsub(inner, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
+    if pos == nil then
+      table.insert(out, { kind = "note", target = target, label = alias or target })
+    end
+  end
+  for url in string.gmatch(text or "", "(https?://[^%s%)>]+)") do
+    local host = string.match(url, "^https?://([^/]+)") or url
+    table.insert(out, { kind = "url", target = url, label = host })
+  end
+  return out
+end
+
+-- Первая картинка: ![[файл.png]] или ![](путь)
+function M.imageOf(text)
+  local name = string.match(text or "", "!%[%[([^%]|]+)[^%]]*%]%]")
+  if name ~= nil then
+    return name
+  end
+  return string.match(text or "", "!%[[^%]]*%]%(([^%)]+)%)")
+end
+
+-- Приоритет: «!! текст» — 2, «! текст» — 1, иначе 0.
+function M.priority(text)
+  local t = noctalia.string.trim(text or "")
+  if string.sub(t, 1, 2) == "!!" then
+    return 2
+  elseif string.sub(t, 1, 1) == "!" and string.sub(t, 2, 2) ~= "[" then
+    return 1
+  end
+  return 0
+end
+
+-- Текст для листка: без срока, меток, чек-листа, картинок и приоритета;
+-- [[ссылки]] — их подписью, адреса — доменом.
 function M.bodyOf(text)
-  local t = string.gsub(text or "", "%s*@{%d%d%d%d%-%d%d%-%d%d}", "")
+  local lines = {}
+  for line in string.gmatch((text or "") .. "\n", "([^\n]*)\n") do
+    if not string.match(line, "^%s*[-*]%s+%[.%]") then
+      table.insert(lines, line)
+    end
+  end
+  local t = table.concat(lines, "\n")
+  t = string.gsub(t, "^%s*!!?%s+", "")
+  t = string.gsub(t, "!%[%[[^%]]*%]%]", "")
+  t = string.gsub(t, "!%[[^%]]*%]%([^%)]*%)", "")
+  t = string.gsub(t, "%[%[([^%]|]+)|([^%]]+)%]%]", "%2")
+  t = string.gsub(t, "%[%[([^%]]+)%]%]", "%1")
+  t = string.gsub(t, "https?://([^/%s]+)[^%s%)>]*", "%1")
+  t = string.gsub(t, "%s*@{%d%d%d%d%-%d%d%-%d%d}", "")
   t = string.gsub(" " .. t, "([%s(])#[^%s#,.;:!?()]+", "%1")
   t = string.gsub(t, "[ \t]+\n", "\n")
+  t = string.gsub(t, "\n\n+", "\n")
   t = string.gsub(t, "  +", " ")
   return noctalia.string.trim(t)
 end

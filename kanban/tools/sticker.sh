@@ -3,10 +3,11 @@
 # бумага с лёгким градиентом, текст рукописным шрифтом, полупрозрачный скотч
 # с рваными краями поверх верхней кромки, мягкая тень, поворот всего листка.
 #
-#   sticker.sh OUT TEXT PAPER ANGLE TAPE_ANGLE TAPE_SHIFT TAPE(0/1) FONT SCALE [FOOTER] [TAPE_COLOR] [FOOTER_COLOR]
+#   sticker.sh OUT TEXT PAPER ANGLE TAPE_ANGLE TAPE_SHIFT TAPE(0/1) FONT SCALE [FOOTER] [TAPE_COLOR] [FOOTER_COLOR] [CLIP] [PIN] [IMAGE]
 #
 # FOOTER — мелкая строка внизу листка (срок, метки); TAPE_COLOR — цвет скотча
-# (#rrggbbaa; красный у просроченных).
+# (#rrggbbaa; красный у просроченных). CLIP=1 — скрепка (в карточке ссылка),
+# PIN — цвет булавки вместо скотча (приоритет), IMAGE — миниатюра под текстом.
 #
 # Текст передаётся аргументом и пишется в OUT.txt (caption:@файл — без
 # интерпретации %-escape и @). Кеш старше 60 дней чистится тут же.
@@ -16,6 +17,9 @@
 set -euo pipefail
 out=$1 text=$2 paper=$3 angle=$4 tang=$5 tshift=$6 tape=$7 font=$8 k=$9
 footer=${10:-} tapeColor=${11:-#F2EEE3CC} footColor=${12:-#22262F99}
+clip=${13:-0} pin=${14:-} image=${15:-}
+[[ -n "$pin" ]] && tape=0
+[[ -n "$image" && ! -f "$image" ]] && image=""
 
 dir=$(dirname "$out")
 mkdir -p "$dir"
@@ -37,6 +41,13 @@ FS=$(px 12)
 footH=0
 [[ -n "$footer" ]] && footH=$(( FS + $(px 6) ))
 textH=$(( LIFT + PH - PAD - textTop - footH ))
+imgH=0
+if [[ -n "$image" ]]; then
+  # с картинкой: текст — две строки, ниже миниатюра до подписи
+  lineH=$(( PS * 13 / 10 ))
+  (( textH > 2 * lineH )) && textH=$(( 2 * lineH ))
+  imgH=$(( LIFT + PH - PAD - footH - textTop - textH - $(px 10) ))
+fi
 
 # Скотч: полоса с рваными (зубчатыми) торцами.
 tapePoly() {
@@ -55,6 +66,41 @@ if [[ "$tape" == 1 ]]; then
        -fill '#FFFFFF2E' -draw "rectangle 0,$(( TH / 4 )) ${TW},$(( TH / 3 ))"
        -background none -rotate "$tang" \)
     -gravity north -geometry "+${tshift}+0" -compose over -composite -gravity northwest
+  )
+fi
+
+imgLayer=()
+if [[ -n "$image" && $imgH -gt $(px 20) ]]; then
+  imgLayer=(
+    \( "$image" -auto-orient -thumbnail "${textW}x${imgH}" -bordercolor '#FFFFFF' -border "$(px 2)" \)
+    -gravity northwest -geometry "+${PAD}+$(( textTop + textH + $(px 2) ))" -compose over -composite
+  )
+fi
+
+# Скрепка у правого верхнего угла: две вложенные скруглённые петли.
+clipLayer=()
+if [[ "$clip" == 1 ]]; then
+  cw=$(px 12) ch=$(px 30) r=$(px 6) sw=$(px 2)
+  clipLayer=(
+    \( -size "$(( cw + 4 * sw ))x$(( ch + 4 * sw ))" xc:none -fill none -stroke '#7A8089' -strokewidth "$sw"
+       -draw "roundrectangle $sw,$sw $(( cw + sw )),$(( ch + sw )) $r,$r"
+       -draw "roundrectangle $(( 2 * sw + sw / 2 )),$(( 3 * sw )) $(( cw - sw / 2 )),$(( ch - 2 * sw )) $(( r * 2 / 3 )),$(( r * 2 / 3 ))"
+       -background none -rotate 18 \)
+    -gravity northeast -geometry "+$(px 8)+$(( LIFT - $(px 8) ))" -compose over -composite -gravity northwest
+  )
+fi
+
+# Булавка (приоритет): шарик с бликом и тенью сверху по центру.
+pinLayer=()
+if [[ -n "$pin" ]]; then
+  pr=$(px 9)
+  pinLayer=(
+    \( -size "$(( 4 * pr ))x$(( 4 * pr ))" xc:none
+       -fill '#00000055' -draw "circle $(( 2 * pr + pr / 3 )),$(( 2 * pr + pr / 2 )) $(( 2 * pr + pr / 3 + pr )),$(( 2 * pr + pr / 2 ))"
+       -blur "0x$(px 2)"
+       -fill "$pin" -draw "circle $(( 2 * pr )),$(( 2 * pr )) $(( 3 * pr )),$(( 2 * pr ))"
+       -fill '#FFFFFFAA' -draw "circle $(( 2 * pr - pr / 3 )),$(( 2 * pr - pr / 3 )) $(( 2 * pr - pr / 3 + pr / 3 )),$(( 2 * pr - pr / 3 ))" \)
+    -gravity north -geometry "+0+$(( LIFT - 2 * pr + $(px 4) ))" -compose over -composite -gravity northwest
   )
 fi
 
@@ -77,8 +123,11 @@ magick \
   \( -size "${textW}x" -background none -fill '#22262F' -font "$font" -pointsize "$PS" \
      -interline-spacing "$(px 1)" caption:@"$txt" -crop "${textW}x${textH}+0+0" +repage \) \
   -geometry "+${PAD}+${textTop}" -compose over -composite \
+  "${imgLayer[@]}" \
   "${footLayer[@]}" \
   "${tapeLayer[@]}" \
+  "${clipLayer[@]}" \
+  "${pinLayer[@]}" \
   \( +clone -background '#000000' -shadow "55x$(px 3)+$(px 1)+$(px 4)" \) +swap \
   -background none -compose over -layers merge +repage \
   -background none -rotate "$angle" \

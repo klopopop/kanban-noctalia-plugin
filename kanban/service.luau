@@ -11,7 +11,7 @@
 --   • помидор: конец таймера — уведомление.
 --
 -- IPC: add <текст> · check (сроки сейчас) · summary (сводка сейчас) ·
---      pomo-stop
+--      shot <png> (карточка со скриншотом) · pomo-stop
 
 local store = require("./store.luau")
 local boardLib = require("./board.luau")
@@ -163,6 +163,18 @@ function onIpc(event, payload)
     checkDue(true, false)
   elseif event == "summary" then
     checkDue(false, true)
+  elseif event == "shot" then
+    -- скриншот из extras/hyprland/kanban-shot.sh → attachments + карточка
+    local src = noctalia.string.trim(payload or "")
+    local name = "kanban-" .. os.date("%Y%m%d-%H%M%S") .. ".png"
+    local dir = store.boardsDir() .. "/attachments"
+    noctalia.runAsync({ "sh", "-c", 'mkdir -p "$1" && mv -f -- "$2" "$1/$3"', "_", dir, src, name }, function(result)
+      if result.exitCode == 0 then
+        add("Скриншот " .. os.date("%d.%m %H:%M") .. " ![[" .. name .. "]]")
+      else
+        noctalia.notifyError("Канбан", "Скриншот не сохранился: " .. tostring(result.stderr))
+      end
+    end)
   elseif event == "pomo-stop" then
     store.stopPomo()
   end
