@@ -19,8 +19,8 @@ placement = "floating"
 position  = "center"
 keyboard_focus = "exclusive"
 # Клавиатура: стрелки — выбор листка, Enter — правка, Delete — удалить,
-# n — новая карточка, 1–9 — в колонку N, Ctrl+Z — отмена, Ctrl+F — поиск.
-capture_keys = ["Left", "Right", "Up", "Down", "Return", "Delete", "n",
+# n — новая карточка, p — помидор, 1–9 — в колонку N, Ctrl+Z — отмена, Ctrl+F — поиск.
+capture_keys = ["Left", "Right", "Up", "Down", "Return", "Delete", "n", "p",
                 "1", "2", "3", "4", "5", "6", "7", "8", "9", "ctrl+z", "ctrl+f"]
 
 # Фон: быстрое добавление (IPC add) и напоминания о сроках.

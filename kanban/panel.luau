@@ -85,6 +85,9 @@ local NAMED_ORDER = { "yellow", "orange", "pink", "red", "purple", "blue", "gree
 -- Фильтр по метке (#тег), nil — все карточки
 local tagFilter = nil
 
+-- Файл состояния (учёт времени, лимиты, помидор) — перечитывается при load/save
+local st = {}
+
 -- Отмена: стек прежних содержимых файла (до каждой записи из панели).
 -- Внешняя правка файла (Obsidian, git) или смена доски стек очищает.
 local UNDO_MAX = 50
@@ -136,6 +139,8 @@ local function save()
   end
   lastSaved = text
   stamp = stampOf()
+  store.updateState(function(s2) store.reconcile(s2, path, board) end)
+  st = store.readState()
   store.bump()
 end
 
@@ -155,6 +160,8 @@ local function load()
   board = boardLib.parse(raw)
   lastSaved = raw
   stamp = stampOf()
+  store.updateState(function(s2) store.reconcile(s2, path, board) end)
+  st = store.readState()
   colors = store.colors()
 end
 
@@ -230,6 +237,9 @@ local function moveCard(id, toLane, pos)
   pos = math.max(1, math.min(pos, #cards + 1))
   table.insert(cards, pos, card)
   if board.lanes[toLane].complete then
+    if not board.lanes[li].complete and store.respawn(board, card) then
+      noctalia.notify("Канбан", "Повтор: следующая «" .. boardLib.bodyOf(card.text) .. "» в «" .. board.lanes[1].title .. "»")
+    end
     card.done = true
   elseif board.lanes[li].complete then
     card.done = false
@@ -296,9 +306,8 @@ local function commitEdit(value)
     if text == "" then
       table.remove(board.lanes[li].cards, ci)
     else
-      local named = store.colorOf(colors, path, card.text)
-      if named ~= nil and text ~= card.text then
-        store.setColor(path, text, named, card.text)
+      if text ~= card.text then
+        store.renameCard(path, card.text, text)
         colors = store.colors()
       end
       card.text = text
@@ -586,6 +595,13 @@ function onKey(chord, pressed)
       deleteCard(card.id)
       selectAt(li, i)
     end
+  elseif chord == "p" then
+    local card = selectedCard()
+    if card ~= nil then
+      store.startPomo(card.text, store.boardName(path), 25)
+      st = store.readState()
+      noctalia.notify("Помидор 25 минут", boardLib.bodyOf(card.text))
+    end
   elseif chord == "n" then
     startAdd(sel ~= nil and sel.lane or 1)
   else
@@ -628,6 +644,13 @@ local function commitLaneEdit(value)
   end
   local title = cleanTitle(value or laneEditText)
   if title ~= "" and board.lanes[li] ~= nil then
+    local old = board.lanes[li].title
+    if old ~= title then
+      local wip = store.wipOf(st, path, old)
+      if wip ~= nil then
+        store.setWip(path, title, wip, old)
+      end
+    end
     board.lanes[li].title = title
     render()
     save()
@@ -967,6 +990,22 @@ local function colorChips(card)
   return ui.row({ gap = 6, align = "center" }, chips)
 end
 
+local function startPomo(card)
+  store.startPomo(card.text, store.boardName(path), 25)
+  st = store.readState()
+  noctalia.notify("Помидор 25 минут", boardLib.bodyOf(card.text))
+  render()
+end
+
+local function pomoButton(card)
+  local pomo = st.pomo
+  local mine = type(pomo) == "table" and pomo.text == card.text and pomo.untilMs > noctalia.nowMs()
+  if mine then
+    return iconButton("player-stop", "Остановить помидор", function() store.stopPomo(); st = store.readState(); render() end)
+  end
+  return iconButton("clock-play", "Помидор 25 минут (p)", function() startPomo(card) end)
+end
+
 local function editorView(card, li)
   local id = card.id
   local due = boardLib.dueOf(editText)
@@ -995,6 +1034,7 @@ local function editorView(card, li)
       iconButton("arrow-left", "В колонку левее", function() shiftCard(id, -1) end),
       iconButton("arrow-right", "В колонку правее", function() shiftCard(id, 1) end),
       iconButton("note", "Копию стикером на рабочий стол", function() toDesktop(id) end),
+      pomoButton(card),
       iconButton("trash", "Удалить карточку", function() deleteCard(id) end),
       ui.spacer({ flexGrow = 1 }),
       iconButton("x", "Отмена", cancelEdit),
@@ -1068,6 +1108,13 @@ local function cardFooter(card)
       table.insert(parts, "было до " .. short)
     else
       table.insert(parts, "до " .. short)
+    end
+  end
+  local t = store.trackOf(st, path, card.text)
+  if t ~= nil and not card.done and t.since ~= nil then
+    local inLane = math.floor((noctalia.nowMs() - t.since) / 86400000)
+    if inLane >= 1 then
+      table.insert(parts, inLane .. " дн.")
     end
   end
   for _, tag in ipairs(boardLib.tagsOf(card.text)) do
@@ -1242,6 +1289,28 @@ local function clearButton(lane, li)
   return iconButton("archive", "Убрать все в архив (два нажатия)" .. (archived > 0 and (". В архиве: " .. archived) or ""), function() clearDone(li) end)
 end
 
+local function wipLabel(lane)
+  local wip = store.wipOf(st, path, lane.title)
+  if wip == nil then
+    return ui.label({ text = tostring(#lane.cards), fontSize = 14, color = "on_surface_variant" })
+  end
+  local over = #lane.cards > wip
+  return ui.label({
+    text = #lane.cards .. "/" .. wip,
+    fontSize = 14,
+    fontWeight = over and "bold" or nil,
+    color = over and "error" or (#lane.cards == wip and "primary" or "on_surface_variant"),
+  })
+end
+
+local function setLaneWip(lane, delta)
+  local cur = store.wipOf(st, path, lane.title) or #lane.cards
+  local n = math.max(0, cur + delta)
+  store.setWip(path, lane.title, n)
+  st = store.readState()
+  render()
+end
+
 local function laneHeader(lane, li)
   if laneEdit ~= li then
     return ui.row({ gap = 8, align = "center" }, {
@@ -1252,7 +1321,7 @@ local function laneHeader(lane, li)
       }, {
         ui.label({ text = lane.title, fontFamily = fontFamily, fontSize = LANE_FONT, color = "on_surface", maxLines = 1,
           maxWidth = math.max(60, laneInner - (lane.complete and #lane.cards > 0 and 110 or 80)) }),
-        ui.label({ text = tostring(#lane.cards), fontSize = 14, color = "on_surface_variant" }),
+        wipLabel(lane),
         ui.spacer({ flexGrow = 1 }),
       }),
       clearButton(lane, li),
@@ -1289,6 +1358,12 @@ local function laneHeader(lane, li)
       ui.spacer({ flexGrow = 1 }),
       iconButton("x", "Отмена", function() laneEdit = nil; render() end),
       iconButton("check", "Сохранить (Enter)", function() commitLaneEdit(nil) end, "primary"),
+    }),
+    ui.row({ gap = 2, align = "center" }, {
+      ui.label({ text = "Лимит карточек:", fontSize = 13, color = "on_surface_variant" }),
+      iconButton("minus", "Меньше (0 — без лимита)", function() setLaneWip(lane, -1) end),
+      ui.label({ text = tostring(store.wipOf(st, path, lane.title) or "нет"), fontSize = 14, color = "on_surface" }),
+      iconButton("plus", "Больше", function() setLaneWip(lane, 1) end),
     }),
   })
 end
@@ -1478,6 +1553,7 @@ end
 
 function onOpen()
   reloadIfChanged()
+  st = store.readState()
   scanBoards()
   panel.setWantsSecondTicks(true)
   render()
