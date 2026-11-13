@@ -10,12 +10,38 @@ local M = {}
 
 M.STATE_FILE = noctalia.expandPath("~/.local/state/noctalia-kanban.json")
 
+-- Настройки: из окна настроек доски (st.settings в файле состояния), иначе —
+-- из манифеста/настроек Noctalia (значения по умолчанию). Плагин не может
+-- записывать свои настройки Noctalia, поэтому своё окно хранит их сам.
+M.SETTING_KEYS = { "boards_dir", "board_path", "font_path", "size_percent" }
+
+function M.cfg(key)
+  local st = M.readState()
+  local own = type(st.settings) == "table" and st.settings[key] or nil
+  if own ~= nil and own ~= "" then
+    return own
+  end
+  return noctalia.getConfig(key)
+end
+
+function M.saveSettings(values)
+  M.updateState(function(st)
+    st.settings = type(st.settings) == "table" and st.settings or {}
+    for _, key in ipairs(M.SETTING_KEYS) do
+      if values[key] ~= nil then
+        st.settings[key] = values[key]
+      end
+    end
+  end)
+  M.bump()
+end
+
 function M.settingPath()
-  return noctalia.expandPath(noctalia.string.trim(noctalia.getConfig("board_path") or ""))
+  return noctalia.expandPath(noctalia.string.trim(tostring(M.cfg("board_path") or "")))
 end
 
 function M.boardsDir()
-  return noctalia.expandPath(noctalia.string.trim(noctalia.getConfig("boards_dir") or ""))
+  return noctalia.expandPath(noctalia.string.trim(tostring(M.cfg("boards_dir") or "")))
 end
 
 function M.boardName(p)

@@ -32,7 +32,7 @@ local width = math.max(160, math.floor(tonumber(noctalia.getConfig("width")) or 
 
 local fontFamily = nil
 do
-  local path = noctalia.string.trim(noctalia.getConfig("font_path") or "")
+  local path = noctalia.string.trim(tostring(store.cfg("font_path") or ""))
   if path ~= "" then
     fontFamily = noctalia.loadFont(noctalia.expandPath(path))
   end

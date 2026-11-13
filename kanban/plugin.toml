@@ -1,6 +1,6 @@
 id          = "pvs/kanban"
 name        = "Kanban"
-version     = "0.3.0"
+version     = "0.3.1"
 plugin_api  = 43
 author      = "pvs"
 license     = "MIT"

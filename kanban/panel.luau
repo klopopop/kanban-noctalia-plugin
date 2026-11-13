@@ -20,15 +20,18 @@ local PAPERS = { "#FFF0A5", "#FFD3A3", "#B9DDFF", "#DCC6F7", "#FFC2D6", "#FFB3AC
 local CARD_FONT = 18
 local LANE_FONT = 26
 
+local store = require("./store.luau")
+
 local fontFamily = nil
 local fontFile = "DejaVu-Sans"
-do
-  local path = noctalia.string.trim(noctalia.getConfig("font_path") or "")
+
+-- Шрифт карточек; вызывается и после сохранения настроек.
+local function applyFont()
+  fontFamily, fontFile = nil, "DejaVu-Sans"
+  local path = noctalia.string.trim(tostring(store.cfg("font_path") or ""))
   if path ~= "" then
     fontFile = noctalia.expandPath(path)
-  end
-  if path ~= "" then
-    local family, err = noctalia.loadFont(noctalia.expandPath(path))
+    local family, err = noctalia.loadFont(fontFile)
     if family ~= nil then
       fontFamily = family
     else
@@ -36,6 +39,7 @@ do
     end
   end
 end
+applyFont()
 
 -- ── Состояние ───────────────────────────────────────────────────────────────
 
@@ -70,7 +74,6 @@ local boardDeleteArmed = nil -- время первого нажатия «уд�
 -- Все доски: { path, name }, из папки boards_dir (+ текущая, если она вне её)
 local boards = {}
 
-local store = require("./store.luau")
 local resolvePath = store.currentPath
 local rememberPath = store.rememberPath
 
@@ -96,6 +99,11 @@ local lastSaved = nil -- текст файла после последнего �
 
 -- Выбор с клавиатуры: колонка и карточка (id), nil — ничего не выбрано
 local sel = nil
+
+-- Окно настроек внутри доски
+local settingsOpen = false
+local settingsSeq = 0
+local draft = {}
 
 -- Раскладка сетки листков (считается в layoutFor при каждой отрисовке)
 local cellW, cellH, perRow = 176, 172, 2
@@ -593,7 +601,7 @@ function onKey(chord, pressed)
     return
   end
   -- пока открыто поле правки — клавиши его, не доски
-  if editingId ~= nil or addingLane ~= nil or laneEdit ~= nil or boardEdit then
+  if editingId ~= nil or addingLane ~= nil or laneEdit ~= nil or boardEdit or settingsOpen then
     return
   end
   if chord == "Left" or chord == "Right" or chord == "Up" or chord == "Down" then
@@ -751,7 +759,7 @@ local function boardName(p)
 end
 
 local function boardsDir()
-  return noctalia.expandPath(noctalia.string.trim(noctalia.getConfig("boards_dir") or ""))
+  return store.boardsDir()
 end
 
 -- Найти доски: .md с frontmatter Kanban. Асинхронно, потом перерисовка.
@@ -1631,6 +1639,110 @@ local function searchBox()
   })
 end
 
+-- ── Окно настроек (внутри доски) ──
+
+local SETTINGS_DEFAULTS_NOTE = "Пусто — значение по умолчанию из манифеста плагина."
+
+function openSettingsView()
+  editingId, addingLane, laneEdit, boardEdit = nil, nil, nil, false
+  searchOpen = false
+  draft = {}
+  for _, key in ipairs(store.SETTING_KEYS) do
+    draft[key] = store.cfg(key)
+  end
+  draft.size_percent = tonumber(draft.size_percent) or 85
+  settingsSeq += 1
+  settingsOpen = true
+  render()
+end
+
+local function settingRow(title, hint, control)
+  return ui.row({ gap = 24, align = "center" }, {
+    ui.column({ width = 420, gap = 2 }, {
+      ui.label({ text = title, fontFamily = fontFamily, fontSize = 24, color = "on_surface" }),
+      ui.label({ text = hint, fontSize = 13, color = "on_surface_variant", maxLines = 2 }),
+    }),
+    ui.column({ flexGrow = 1 }, { control }),
+  })
+end
+
+local function pathInput(key, placeholder)
+  return ui.input({
+    key = "set-" .. key .. "-" .. settingsSeq,
+    value = tostring(draft[key] or ""),
+    placeholder = placeholder,
+    fontSize = 15,
+    onChange = function(v) draft[key] = v end,
+  })
+end
+
+local function saveSettingsView()
+  local before = {}
+  for _, key in ipairs(store.SETTING_KEYS) do
+    before[key] = store.cfg(key)
+  end
+  local values = {}
+  for _, key in ipairs(store.SETTING_KEYS) do
+    local v = draft[key]
+    if type(v) == "string" then
+      v = noctalia.string.trim(v)
+    end
+    values[key] = v
+  end
+  store.saveSettings(values)
+  settingsOpen = false
+  if tostring(before.font_path) ~= tostring(values.font_path) then
+    applyFont()
+  end
+  if tostring(before.boards_dir) ~= tostring(values.boards_dir) or tostring(before.board_path) ~= tostring(values.board_path) then
+    load()
+    scanBoards()
+  end
+  render()
+  noctalia.notify("Канбан", "Настройки сохранены")
+  if tonumber(before.size_percent) ~= tonumber(values.size_percent) then
+    -- размер окна меняется через манифест: плагин перезапустится и доска
+    -- откроется уже в новом размере
+    noctalia.runAsync({ "noctalia", "msg", "plugin", "pvs/kanban:service", "all", "refit", IS_FULL and "" or "reopen" })
+  end
+end
+
+function settingsView()
+  return ui.scroll({ flexGrow = 1, gap = 22, padding = 28, fill = "surface_container/0.6", radius = 14 }, {
+    ui.row({ gap = 12, align = "center" }, {
+      ui.glyph({ name = "settings", size = 26, color = "primary" }),
+      ui.label({ text = "Настройки доски", fontFamily = fontFamily, fontSize = 34, color = "on_surface" }),
+    }),
+    ui.box({ height = 3, radius = 2, fill = PAPERS[1] }),
+    settingRow("Папка с досками", "Каждый .md формата Obsidian Kanban в ней (и в подпапках) — вкладка; новые доски создаются тут.",
+      pathInput("boards_dir", "~/Documents/obsidian/kanban-boards")),
+    settingRow("Доска по умолчанию", "Открывается, пока не выбрана другая.",
+      pathInput("board_path", "~/Documents/obsidian/kanban-boards/Канбан.md")),
+    settingRow("Шрифт карточек", ".ttf/.otf с кириллицей; пусто — шрифт оболочки.",
+      pathInput("font_path", "~/.local/share/fonts/Pangolin-Regular.ttf")),
+    settingRow("Размер окна", "Процент от видимой области экрана (без панелей). На весь экран — кнопка в шапке.",
+      ui.row({ gap = 12, align = "center" }, {
+        ui.slider({
+          key = "set-size-" .. settingsSeq,
+          min = 40, max = 100, step = 5,
+          value = draft.size_percent,
+          flexGrow = 1,
+          onChange = function(v) draft.size_percent = math.floor(tonumber(v) or 85); render() end,
+        }),
+        ui.label({ text = tostring(draft.size_percent) .. "%", fontFamily = fontFamily, fontSize = 24, color = "on_surface", width = 70 }),
+      })),
+    ui.label({ text = SETTINGS_DEFAULTS_NOTE .. " Виджет на столе настраивается в редакторе виджетов (Win+G).", fontSize = 13, color = "on_surface_variant" }),
+    ui.row({ gap = 8, align = "center" }, {
+      ui.button({ text = "Системные настройки Noctalia", glyph = "external-link", variant = "ghost", controlSize = "sm",
+        tooltip = "Размещение и слой панели, значения по умолчанию",
+        onClick = function() panel.close(); noctalia.openSettings() end }),
+      ui.spacer({ flexGrow = 1 }),
+      ui.button({ text = "Отмена", variant = "ghost", onClick = function() settingsOpen = false; render() end }),
+      ui.button({ text = "Сохранить", glyph = "check", variant = "primary", onClick = saveSettingsView }),
+    }),
+  })
+end
+
 render = function()
   if board == nil then
     load()
@@ -1669,7 +1781,7 @@ render = function()
       iconButton("column-insert-right", "Добавить колонку", addLane),
       iconButton("refresh", "Перечитать файл", function() load(); editingId, addingLane = nil, nil; render() end),
       iconButton("external-link", "Открыть в Obsidian", openInObsidian),
-      iconButton("settings", "Настройки: папка с досками, доска по умолчанию, шрифт", function() panel.close(); noctalia.openSettings() end),
+      iconButton("settings", settingsOpen and "Закрыть настройки" or "Настройки доски", function() if settingsOpen then settingsOpen = false; render() else openSettingsView() end end, settingsOpen and "primary" or nil),
       iconButton(IS_FULL and "arrows-minimize" or "arrows-maximize", IS_FULL and "Обычный размер" or "На весь экран", function()
         store.setFull(not IS_FULL)
         panel.close()
@@ -1677,8 +1789,8 @@ render = function()
       end),
       iconButton("x", "Закрыть (Esc)", function() panel.close() end),
     }),
-    tagBar(),
-    ui.row({ gap = LANE_GAP, flexGrow = 1, align = "stretch" }, lanes),
+    settingsOpen and ui.box({ height = 1, fill = "#00000000" }) or tagBar(),
+    settingsOpen and settingsView() or ui.row({ gap = LANE_GAP, flexGrow = 1, align = "stretch" }, lanes),
   }))
 end
 
@@ -1720,5 +1832,7 @@ function onIpc(event, payload)
     onKey(noctalia.string.trim(payload or ""), true)
   elseif event == "undo" then
     undo()
+  elseif event == "settings" then
+    openSettingsView()
   end
 end

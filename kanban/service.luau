@@ -185,7 +185,7 @@ local function fitPanel(cb, openAfter)
     local r = mon.reserved or { 0, 0, 0, 0 }
     local aw = lw - (r[1] or 0) - (r[3] or 0)
     local ah = lh - (r[2] or 0) - (r[4] or 0)
-    local pct = math.max(40, math.min(100, tonumber(noctalia.getConfig("size_percent")) or 85))
+    local pct = math.max(40, math.min(100, tonumber(store.cfg("size_percent")) or 85))
     local w = math.floor(aw * pct / 100)
     local h = math.floor(ah * pct / 100)
     store.updateState(function(st)
@@ -255,6 +255,9 @@ function onIpc(event, payload)
         noctalia.notifyError("Канбан", "Скриншот не сохранился: " .. tostring(result.stderr))
       end
     end)
+  elseif event == "refit" then
+    -- настройки доски сохранены: подогнать окно, при смене размера — переоткрыть
+    fitPanel(function() end, payload == "reopen")
   elseif event == "open" then
     openBoard(false)
   elseif event == "open-force" then
