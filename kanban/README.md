@@ -26,7 +26,12 @@ format, so every board opens and edits in Obsidian too.
 - Bar widget: number of cards in progress, red when something is overdue.
 - Desktop widget: cards in progress as small sheets.
 - Launcher `/kb text`: add a card to any lane, search cards.
-- IPC: `noctalia msg plugin pvs/kanban:service all add "text"`.
+- Undo (Ctrl+Z), keyboard control (arrows, Enter, Delete, n, p, 1–9), search (Ctrl+F).
+- Pomodoro with a countdown in the bar; time in lane on the card; weekly summary.
+- Repeating cards (`#каждую-неделю` …), per-lane card limit.
+- Checklists with progress, `[[note]]` / URL links (paperclip), screenshot cards, `!`/`!!` priority with a push pin.
+- Window size as % of the visible screen area (`size_percent`) and a fullscreen toggle.
+- IPC: `noctalia msg plugin pvs/kanban:service all add "text"` · `open` · `shot <png>` · `check` · `summary` · `pomo-stop`.
 
 ## Requirements
 
@@ -42,6 +47,7 @@ font with the scripts you write in — Pangolin by default
 | `boards_dir` | `~/Documents/obsidian/kanban-boards` | Boards folder (searched recursively) |
 | `board_path` | `~/Documents/obsidian/kanban-boards/Канбан.md` | Default board |
 | `font_path` | `~/.local/share/fonts/Pangolin-Regular.ttf` | Card font, empty = shell font |
+| `size_percent` | 85 | Board window size, % of the visible area |
 | `max_cards`, `width` | 6, 240 | Desktop widget |
 
 The current board, per-card colours and reminder marks live in
